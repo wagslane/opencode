@@ -28,30 +28,7 @@ export default Runtime.handler(
     const client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
     const urls = yield* pairingURLs(client, input)
     const pairing = yield* Effect.tryPromise(() => client.server.pair())
-    const links = urls.map((url) => new URL(`/auth/connect/${pairing.code}`, url).href)
-    // Loopback URLs are useless to the scanning device, so the QR code only carries reachable addresses.
-    const remote = urls.filter((url) => !isLoopback(new URL(url).hostname))
-    process.stdout.write(
-      [
-        "",
-        `  Open a link to connect. Links work once and expire in ${Math.round(pairing.expires_in / 60)} minutes.`,
-        "",
-        ...(links.length ? links.map((link) => `  ${link}`) : ["  (no server URLs)"]),
-        ...(remote.length
-          ? [
-              "",
-              // renderUnicodeCompact separates rows with "\n" on every platform, so splitting on EOL ("\r\n" on Windows) indents only the first row.
-              renderUnicodeCompact(JSON.stringify({ code: pairing.code, urls: remote }), {
-                border: 2,
-              })
-                .split("\n")
-                .map((line) => "  " + line)
-                .join(EOL),
-            ]
-          : []),
-        "",
-      ].join(EOL) + EOL,
-    )
+    process.stdout.write(pairingOutput(pairing, urls))
 
     if (input.remote || Option.isSome(input.url)) return
     const url = new URL(endpoint.url)
@@ -68,6 +45,46 @@ export default Runtime.handler(
     )
   }),
 )
+
+export function pairingOutput(
+  pairing: { readonly code: string; readonly expires_in: number },
+  urls: readonly string[],
+) {
+  const links = urls.map((url) => new URL(`/auth/connect/${pairing.code}`, url).href)
+  // Loopback URLs are useless to the scanning device, so the QR codes only carry reachable addresses.
+  const remote = urls.filter((url) => !isLoopback(new URL(url).hostname))
+  const remoteLink = links.find((link) => !isLoopback(new URL(link).hostname))
+  return (
+    [
+      "",
+      `  Pairing works once and expires in ${Math.round(pairing.expires_in / 60)} minutes.`,
+      "",
+      "  Browser",
+      "  Open a link, or scan the QR code with your phone's camera.",
+      "",
+      ...(links.length ? links.map((link) => `  ${link}`) : ["  (no server URLs)"]),
+      ...(remoteLink ? ["", qrCode(remoteLink)] : []),
+      ...(remote.length
+        ? [
+            "",
+            "  iOS app",
+            "  Scan this QR code from the OpenCode app, not your phone's camera.",
+            "",
+            qrCode(JSON.stringify({ code: pairing.code, urls: remote })),
+          ]
+        : []),
+      "",
+    ].join(EOL) + EOL
+  )
+}
+
+function qrCode(value: string) {
+  // renderUnicodeCompact separates rows with "\n" on every platform, so splitting on EOL ("\r\n" on Windows) indents only the first row.
+  return renderUnicodeCompact(value, { border: 2 })
+    .split("\n")
+    .map((line) => "  " + line)
+    .join(EOL)
+}
 
 export const remoteWarning = [
   "This will expose your OpenCode server to the internet.",
